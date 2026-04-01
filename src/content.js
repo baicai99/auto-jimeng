@@ -22,6 +22,8 @@
     prefixEnabled: false,
     prefixText: "",
     draftText: "",
+    draftSelectionStart: null,
+    draftSelectionEnd: null,
     suffixEnabled: false,
     suffixText: "",
     isSending: false,
@@ -186,7 +188,11 @@
     ui.prefixToggle.addEventListener("click", onPrefixToggleClick);
     ui.prefixTextarea.addEventListener("input", onPrefixInput);
     ui.textarea.addEventListener("input", onDraftInput);
+    ui.textarea.addEventListener("click", onDraftSelectionChange);
     ui.textarea.addEventListener("keydown", onTextareaKeyDown);
+    ui.textarea.addEventListener("keyup", onDraftSelectionChange);
+    ui.textarea.addEventListener("select", onDraftSelectionChange);
+    ui.textarea.addEventListener("focus", onDraftSelectionChange);
     ui.suffixToggle.addEventListener("click", onSuffixToggleClick);
     ui.suffixTextarea.addEventListener("input", onSuffixInput);
     ui.sendButton.addEventListener("click", onSendClick);
@@ -220,7 +226,12 @@
 
   function onDraftInput(event) {
     state.draftText = event.target.value;
+    updateDraftSelection(event.target);
     syncUIState();
+  }
+
+  function onDraftSelectionChange(event) {
+    updateDraftSelection(event.target);
   }
 
   function onSuffixToggleClick(event) {
@@ -235,16 +246,134 @@
   }
 
   function onTextareaKeyDown(event) {
-    if (event.key !== "Enter" || event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void sendDraft();
       return;
     }
 
-    event.preventDefault();
-    void sendDraft();
+    if (
+      (event.key === "Backspace" || event.key === "Delete") &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.isComposing
+    ) {
+      const deleted = deleteDraftPlaceholderRange(event.key, event.target);
+      if (deleted) {
+        event.preventDefault();
+      }
+    }
   }
 
   function onSendClick() {
     void sendDraft();
+  }
+
+  function updateDraftSelection(textarea) {
+    if (!textarea) {
+      return;
+    }
+
+    state.draftSelectionStart =
+      typeof textarea.selectionStart === "number" ? textarea.selectionStart : null;
+    state.draftSelectionEnd =
+      typeof textarea.selectionEnd === "number" ? textarea.selectionEnd : state.draftSelectionStart;
+  }
+
+  function getDraftSelection(value, textarea) {
+    const fallback = value.length;
+    const activeStart =
+      textarea && document.activeElement === textarea && typeof textarea.selectionStart === "number"
+        ? textarea.selectionStart
+        : null;
+    const activeEnd =
+      textarea && document.activeElement === textarea && typeof textarea.selectionEnd === "number"
+        ? textarea.selectionEnd
+        : null;
+
+    const rawStart = activeStart ?? state.draftSelectionStart ?? fallback;
+    const rawEnd = activeEnd ?? state.draftSelectionEnd ?? rawStart;
+    const start = Math.max(0, Math.min(rawStart, value.length));
+    const end = Math.max(start, Math.min(rawEnd, value.length));
+
+    return { start, end };
+  }
+
+  function getDraftPlaceholderRanges(value) {
+    const ranges = [];
+    const pattern = /\{\{[^{}]+?\}\}/g;
+    let match = pattern.exec(value);
+    while (match) {
+      ranges.push({
+        start: match.index,
+        end: match.index + match[0].length
+      });
+      match = pattern.exec(value);
+    }
+    return ranges;
+  }
+
+  function getCollapsedDeleteRange(key, caret, ranges) {
+    if (key === "Backspace") {
+      return ranges.find((range) => caret > range.start && caret <= range.end) ?? null;
+    }
+
+    return ranges.find((range) => caret >= range.start && caret < range.end) ?? null;
+  }
+
+  function getExpandedDeleteRange(selectionStart, selectionEnd, ranges) {
+    const intersected = ranges.filter(
+      (range) => range.start < selectionEnd && range.end > selectionStart
+    );
+    if (intersected.length === 0) {
+      return null;
+    }
+
+    return {
+      start: Math.min(selectionStart, ...intersected.map((range) => range.start)),
+      end: Math.max(selectionEnd, ...intersected.map((range) => range.end))
+    };
+  }
+
+  function applyDraftDeletion(deleteRange, textarea) {
+    const value = state.draftText;
+    state.draftText = `${value.slice(0, deleteRange.start)}${value.slice(deleteRange.end)}`;
+    state.draftSelectionStart = deleteRange.start;
+    state.draftSelectionEnd = deleteRange.start;
+    syncUIState();
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      if (typeof textarea.setSelectionRange === "function") {
+        textarea.setSelectionRange(deleteRange.start, deleteRange.start);
+      }
+      updateDraftSelection(textarea);
+    });
+  }
+
+  function deleteDraftPlaceholderRange(key, textarea) {
+    if (!textarea) {
+      return false;
+    }
+
+    const value = state.draftText;
+    const { start, end } = getDraftSelection(value, textarea);
+    const ranges = getDraftPlaceholderRanges(value);
+    if (ranges.length === 0) {
+      return false;
+    }
+
+    const deleteRange =
+      start === end
+        ? getCollapsedDeleteRange(key, start, ranges)
+        : getExpandedDeleteRange(start, end, ranges);
+    if (!deleteRange) {
+      return false;
+    }
+
+    applyDraftDeletion(deleteRange, textarea);
+    return true;
   }
 
   function setCollapsed(collapsed) {
@@ -518,19 +647,20 @@
     }
 
     const value = state.draftText;
-    const hasFocus = document.activeElement === textarea;
-    const start = hasFocus ? textarea.selectionStart : value.length;
-    const end = hasFocus ? textarea.selectionEnd : value.length;
+    const { start, end } = getDraftSelection(value, textarea);
 
     state.draftText = `${value.slice(0, start)}${placeholder}${value.slice(end)}`;
+    state.draftSelectionStart = start + placeholder.length;
+    state.draftSelectionEnd = state.draftSelectionStart;
     syncUIState();
 
     window.requestAnimationFrame(() => {
       textarea.focus();
-      const nextCaret = start + placeholder.length;
+      const nextCaret = state.draftSelectionStart;
       if (typeof textarea.setSelectionRange === "function") {
         textarea.setSelectionRange(nextCaret, nextCaret);
       }
+      updateDraftSelection(textarea);
     });
   }
 
