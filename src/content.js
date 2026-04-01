@@ -148,6 +148,7 @@
       '        <textarea id="jm-floating-composer-suffix" class="jm-floating-composer__textarea jm-floating-composer__textarea--aux" rows="2" placeholder="例如：{{后缀}}"></textarea>',
       "      </div>",
       "    </div>",
+      '    <div class="jm-floating-composer__warning" hidden></div>',
       '    <div class="jm-floating-composer__compose-hint">发送时会拼接为：前缀 + 用户输入 + 后缀</div>',
       "  </div>",
       '  <div class="jm-floating-composer__footer">',
@@ -175,6 +176,7 @@
     ui.suffixTextarea = root.querySelector("#jm-floating-composer-suffix");
     ui.sendButton = root.querySelector(".jm-floating-composer__send");
     ui.status = root.querySelector(".jm-floating-composer__status");
+    ui.warning = root.querySelector(".jm-floating-composer__warning");
     ui.composeHint = root.querySelector(".jm-floating-composer__compose-hint");
     ui.toggleButton = root.querySelector(".jm-floating-composer__icon-btn");
     ui.expandButton = root.querySelector(".jm-floating-composer__collapsed");
@@ -314,6 +316,7 @@
     ui.dynamicToggle.textContent = state.dynamicEnabled ? "关闭" : "开启";
     ui.prefixToggle.textContent = state.prefixEnabled ? "关闭" : "开启";
     ui.suffixToggle.textContent = state.suffixEnabled ? "关闭" : "开启";
+    syncUnusedTemplateWarning();
     ui.composeHint.textContent = buildComposeHint();
 
     const hasDraft = state.draftText.trim().length > 0;
@@ -445,6 +448,113 @@
       return "实际发送：用户输入";
     }
     return `将发送 ${result.prompts.length} 条：第 1 条 ${firstPrompt}`;
+  }
+
+  function syncUnusedTemplateWarning() {
+    if (!ui.warning) {
+      return;
+    }
+
+    const warningData = buildUnusedTemplateWarningData();
+    ui.warning.hidden = !warningData;
+    ui.warning.replaceChildren();
+
+    if (!warningData) {
+      return;
+    }
+
+    ui.warning.appendChild(document.createTextNode(`有 ${warningData.total} 个动态提示词未被使用：`));
+
+    warningData.shownKeys.forEach((key, index) => {
+      if (index > 0) {
+        ui.warning.appendChild(document.createTextNode("、"));
+      }
+      ui.warning.appendChild(createUnusedTemplateButton(key));
+    });
+
+    if (warningData.remainingCount > 0) {
+      ui.warning.appendChild(document.createTextNode(` 等 ${warningData.remainingCount} 个`));
+    }
+  }
+
+  function buildUnusedTemplateWarningData() {
+    if (!state.dynamicEnabled) {
+      return null;
+    }
+
+    const parseResult = parseDynamicTemplates(state.dynamicTemplateText);
+    if (!parseResult.valid) {
+      return null;
+    }
+
+    const unusedKeys = getUnusedTemplateKeys(parseResult.templateMap);
+    if (unusedKeys.length === 0) {
+      return null;
+    }
+
+    return {
+      total: unusedKeys.length,
+      shownKeys: unusedKeys.slice(0, 3),
+      remainingCount: unusedKeys.length - Math.min(unusedKeys.length, 3)
+    };
+  }
+
+  function createUnusedTemplateButton(key) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "jm-floating-composer__warning-btn";
+    button.textContent = key;
+    button.addEventListener("click", () => {
+      insertTemplateKeyIntoDraft(key);
+    });
+    return button;
+  }
+
+  function insertTemplateKeyIntoDraft(key) {
+    const placeholder = `{{${key}}}`;
+    const textarea = ui.textarea;
+    if (!textarea) {
+      return;
+    }
+
+    const value = state.draftText;
+    const hasFocus = document.activeElement === textarea;
+    const start = hasFocus ? textarea.selectionStart : value.length;
+    const end = hasFocus ? textarea.selectionEnd : value.length;
+
+    state.draftText = `${value.slice(0, start)}${placeholder}${value.slice(end)}`;
+    syncUIState();
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const nextCaret = start + placeholder.length;
+      if (typeof textarea.setSelectionRange === "function") {
+        textarea.setSelectionRange(nextCaret, nextCaret);
+      }
+    });
+  }
+
+  function getUnusedTemplateKeys(templateMap) {
+    const templateKeys = Object.keys(templateMap);
+    if (templateKeys.length === 0) {
+      return [];
+    }
+
+    const usedKeys = new Set(extractTemplateKeys(getActiveTemplateSourceText()));
+    return templateKeys.filter((key) => !usedKeys.has(key));
+  }
+
+  function getActiveTemplateSourceText() {
+    return [
+      state.prefixEnabled ? state.prefixText : "",
+      state.draftText,
+      state.suffixEnabled ? state.suffixText : ""
+    ].join("\n");
+  }
+
+  function extractTemplateKeys(text) {
+    const matches = text.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g);
+    return Array.from(matches, (match) => normalizeTemplateKey(match[1])).filter(Boolean);
   }
 
   async function hydratePersistedState() {
