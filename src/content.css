@@ -257,6 +257,41 @@ html[lv-theme="dark"] #jm-floating-composer-root {
   width: 100%;
 }
 
+#jm-floating-composer-root .jm-floating-composer__input {
+  background: var(--jm-control-bg);
+  border: 1px solid var(--jm-control-border);
+  border-radius: 12px;
+  color: var(--jm-text-primary);
+  flex: 1 1 auto;
+  font-size: 14px;
+  line-height: 1.2;
+  min-width: 0;
+  outline: none;
+  padding: 10px 12px;
+}
+
+#jm-floating-composer-root .jm-floating-composer__input:focus {
+  border-color: var(--jm-control-focus);
+  box-shadow: 0 0 0 3px var(--jm-control-ring);
+}
+
+#jm-floating-composer-root .jm-floating-composer__input::placeholder {
+  color: var(--jm-text-placeholder);
+}
+
+#jm-floating-composer-root .jm-floating-composer__interval-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+#jm-floating-composer-root .jm-floating-composer__input-suffix {
+  color: var(--jm-text-muted);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 #jm-floating-composer-root .jm-floating-composer__textarea--aux {
   min-height: 72px;
 }
@@ -363,6 +398,8 @@ html[lv-theme="dark"] #jm-floating-composer-root .jm-floating-composer__warning-
 }
 
 #jm-floating-composer-root .jm-floating-composer__send:disabled,
+#jm-floating-composer-root .jm-floating-composer__mini-btn:disabled,
+#jm-floating-composer-root .jm-floating-composer__input:disabled,
 #jm-floating-composer-root .jm-floating-composer__textarea:disabled,
 #jm-floating-composer-root .jm-floating-composer__icon-btn:disabled {
   cursor: not-allowed;

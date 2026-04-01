@@ -4,7 +4,7 @@
   const TARGET_PATH_PATTERNS = [/^\/ai-tool\/generate(?:\/|$)/, /^\/ai-tool\/canvas(?:\/|$)/];
   const ROOT_ID = "jm-floating-composer-root";
   const COLLAPSED_CLASS = "jm-floating-composer--collapsed";
-  const BATCH_SEND_INTERVAL_MS = 1500;
+  const DEFAULT_BATCH_SEND_INTERVAL_MS = 1500;
   const DRAG_THRESHOLD_PX = 4;
   const DB_NAME = "jm-floating-composer-db";
   const STORE_NAME = "composer_state";
@@ -27,7 +27,10 @@
     draftSelectionEnd: null,
     suffixEnabled: false,
     suffixText: "",
+    batchSendIntervalMs: DEFAULT_BATCH_SEND_INTERVAL_MS,
+    sendIntervalInput: formatSendIntervalMs(DEFAULT_BATCH_SEND_INTERVAL_MS),
     isSending: false,
+    cancelRequested: false,
     collapsed: false,
     customPosition: null,
     hydrated: false,
@@ -49,6 +52,8 @@
     suffixSection: null,
     suffixToggle: null,
     suffixTextarea: null,
+    intervalInput: null,
+    intervalApplyButton: null,
     sendButton: null,
     status: null,
     composeHint: null,
@@ -191,6 +196,15 @@
       '        <textarea id="jm-floating-composer-suffix" class="jm-floating-composer__textarea jm-floating-composer__textarea--aux" rows="2" placeholder="例如：{{后缀}}"></textarea>',
       "      </div>",
       "    </div>",
+      '    <div class="jm-floating-composer__section">',
+      '      <span class="jm-floating-composer__label jm-floating-composer__label--inline">发送间隔</span>',
+      '      <div class="jm-floating-composer__interval-row">',
+      '        <input id="jm-floating-composer-interval" class="jm-floating-composer__input" type="number" min="0" step="0.1" inputmode="decimal" placeholder="1.5" />',
+      '        <span class="jm-floating-composer__input-suffix">秒</span>',
+      '        <button id="jm-floating-composer-interval-apply" class="jm-floating-composer__mini-btn" type="button">应用</button>',
+      "      </div>",
+      '      <span class="jm-floating-composer__help">仅循环发送时生效，默认 1.5 秒</span>',
+      "    </div>",
       '    <div class="jm-floating-composer__warning" hidden></div>',
       '    <div class="jm-floating-composer__compose-hint">发送时会拼接为：前缀 + 用户输入 + 后缀</div>',
       "  </div>",
@@ -218,6 +232,8 @@
     ui.suffixSection = root.querySelector(".jm-floating-composer__section--suffix");
     ui.suffixToggle = root.querySelector("#jm-floating-composer-suffix-toggle");
     ui.suffixTextarea = root.querySelector("#jm-floating-composer-suffix");
+    ui.intervalInput = root.querySelector("#jm-floating-composer-interval");
+    ui.intervalApplyButton = root.querySelector("#jm-floating-composer-interval-apply");
     ui.sendButton = root.querySelector(".jm-floating-composer__send");
     ui.status = root.querySelector(".jm-floating-composer__status");
     ui.warning = root.querySelector(".jm-floating-composer__warning");
@@ -237,6 +253,9 @@
     ui.textarea.addEventListener("focus", onDraftSelectionChange);
     ui.suffixToggle.addEventListener("click", onSuffixToggleClick);
     ui.suffixTextarea.addEventListener("input", onSuffixInput);
+    ui.intervalInput.addEventListener("input", onSendIntervalInput);
+    ui.intervalInput.addEventListener("keydown", onSendIntervalKeyDown);
+    ui.intervalApplyButton.addEventListener("click", onSendIntervalApplyClick);
     ui.sendButton.addEventListener("click", onSendClick);
     ui.header.addEventListener("pointerdown", onExpandedHeaderPointerDown);
     ui.toggleButton.addEventListener("click", () => setCollapsed(true));
@@ -318,6 +337,24 @@
     syncUIState();
   }
 
+  function onSendIntervalInput(event) {
+    state.sendIntervalInput = event.target.value;
+    syncUIState();
+  }
+
+  function onSendIntervalKeyDown(event) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    applySendIntervalInput();
+  }
+
+  function onSendIntervalApplyClick() {
+    applySendIntervalInput();
+  }
+
   function onTextareaKeyDown(event) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -340,6 +377,11 @@
   }
 
   function onSendClick() {
+    if (state.isSending) {
+      requestSendCancel();
+      return;
+    }
+
     void sendDraft();
   }
 
@@ -513,6 +555,9 @@
     if (ui.suffixTextarea.value !== state.suffixText) {
       ui.suffixTextarea.value = state.suffixText;
     }
+    if (ui.intervalInput.value !== state.sendIntervalInput) {
+      ui.intervalInput.value = state.sendIntervalInput;
+    }
     ui.root.classList.toggle(COLLAPSED_CLASS, state.collapsed);
     ui.root.classList.toggle("jm-floating-composer--dynamic-disabled", !state.dynamicEnabled);
     ui.root.classList.toggle("jm-floating-composer--prefix-disabled", !state.prefixEnabled);
@@ -526,14 +571,21 @@
     ui.composeHint.textContent = buildComposeHint();
 
     const hasDraft = state.draftText.trim().length > 0;
-    const canSend = !state.isSending && state.adapterStatus === STATUS.READY && hasDraft;
+    const canStartSend = state.adapterStatus === STATUS.READY && hasDraft;
+    const canStopSend = state.isSending && !state.cancelRequested;
 
-    ui.sendButton.disabled = !canSend;
-    ui.sendButton.textContent = state.isSending ? "发送中..." : "发送";
+    ui.sendButton.disabled = state.isSending ? !canStopSend : !canStartSend;
+    ui.sendButton.textContent = state.isSending
+      ? state.cancelRequested
+        ? "终止中..."
+        : "终止"
+      : "发送";
     ui.dynamicTextarea.disabled = state.isSending;
     ui.prefixTextarea.disabled = state.isSending;
     ui.textarea.disabled = state.isSending;
     ui.suffixTextarea.disabled = state.isSending;
+    ui.intervalInput.disabled = state.isSending;
+    ui.intervalApplyButton.disabled = state.isSending;
 
     schedulePositionSync();
     scheduleStatePersist();
@@ -562,6 +614,19 @@
     );
   }
 
+  function applySendIntervalInput() {
+    const nextIntervalMs = parseSendIntervalInput(state.sendIntervalInput);
+    if (nextIntervalMs === null) {
+      setStatus(STATUS.ERROR, "发送间隔格式错误");
+      return;
+    }
+
+    state.batchSendIntervalMs = nextIntervalMs;
+    state.sendIntervalInput = formatSendIntervalMs(nextIntervalMs);
+    syncUIState();
+    refreshAdapterStatus();
+  }
+
   async function sendDraft() {
     if (!state.draftText.trim()) {
       setStatus(STATUS.ERROR, "请输入内容");
@@ -582,26 +647,43 @@
     }
 
     state.isSending = true;
+    state.cancelRequested = false;
     syncUIState();
 
     try {
       for (let index = 0; index < prompts.length; index += 1) {
+        throwIfSendCancelled();
         setStatus(STATUS.SENDING, `正在发送 ${index + 1}/${prompts.length}`);
         await setOfficialPrompt(adapter, prompts[index]);
+        throwIfSendCancelled();
         await sendViaOfficialUI(adapter);
         if (index < prompts.length - 1) {
-          await wait(BATCH_SEND_INTERVAL_MS);
+          await waitForNextBatchOrCancel(state.batchSendIntervalMs);
         }
       }
       setStatus(STATUS.READY, "已连接页面");
     } catch (error) {
+      if (isSendCancelledError(error)) {
+        setStatus(STATUS.READY, "已终止发送");
+        return;
+      }
       console.error("[即梦浮动输入框] 发送失败", error);
       setStatus(STATUS.ERROR, "发送失败，请稍后重试");
     } finally {
       state.isSending = false;
+      state.cancelRequested = false;
       syncUIState();
       refreshAdapterStatus();
     }
+  }
+
+  function requestSendCancel() {
+    if (!state.isSending || state.cancelRequested) {
+      return;
+    }
+
+    state.cancelRequested = true;
+    setStatus(STATUS.SENDING, "正在终止...");
   }
 
   function getComposedPromptBuildResult() {
@@ -677,7 +759,7 @@
     if (!firstPrompt) {
       return "实际发送：用户输入";
     }
-    return `将发送 ${result.prompts.length} 条：第 1 条 ${firstPrompt}`;
+    return `将发送 ${result.prompts.length} 条，间隔 ${formatSendIntervalMs(state.batchSendIntervalMs)} 秒：第 1 条 ${firstPrompt}`;
   }
 
   function syncUnusedTemplateWarning() {
@@ -813,6 +895,10 @@
         if (typeof persisted.suffixText === "string") {
           state.suffixText = persisted.suffixText;
         }
+        if (Number.isFinite(persisted.batchSendIntervalMs) && persisted.batchSendIntervalMs >= 0) {
+          state.batchSendIntervalMs = persisted.batchSendIntervalMs;
+          state.sendIntervalInput = formatSendIntervalMs(persisted.batchSendIntervalMs);
+        }
         if (typeof persisted.collapsed === "boolean") {
           state.collapsed = persisted.collapsed;
         }
@@ -878,6 +964,7 @@
       draftText: state.draftText,
       suffixEnabled: state.suffixEnabled,
       suffixText: state.suffixText,
+      batchSendIntervalMs: state.batchSendIntervalMs,
       collapsed: state.collapsed,
       customPosition: state.customPosition
     };
@@ -907,6 +994,29 @@
     }
 
     return null;
+  }
+
+  function parseSendIntervalInput(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const normalized = value.trim().replace(/,/g, ".");
+    if (!normalized) {
+      return null;
+    }
+
+    const seconds = Number.parseFloat(normalized);
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return null;
+    }
+
+    return Math.round(seconds * 1000);
+  }
+
+  function formatSendIntervalMs(ms) {
+    const seconds = ms / 1000;
+    return Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1).replace(/\.0$/, "");
   }
 
   function getDb() {
@@ -1388,6 +1498,7 @@
 
   async function sendViaOfficialUI(adapter) {
     const latestAdapter = await waitForReadySubmit(adapter);
+    throwIfSendCancelled();
     if (!latestAdapter || isSubmitUnavailable(latestAdapter.submitEl)) {
       throw new Error("官方发送按钮不可用");
     }
@@ -1400,6 +1511,7 @@
     let latestAdapter = adapter;
 
     while (Date.now() < deadline) {
+      throwIfSendCancelled();
       latestAdapter = findSiteAdapter() || latestAdapter;
       if (latestAdapter && !isSubmitUnavailable(latestAdapter.submitEl)) {
         return latestAdapter;
@@ -1445,6 +1557,27 @@
     return new Promise((resolve) => {
       window.setTimeout(resolve, ms);
     });
+  }
+
+  async function waitForNextBatchOrCancel(ms) {
+    const deadline = Date.now() + ms;
+
+    while (Date.now() < deadline) {
+      throwIfSendCancelled();
+      await wait(Math.min(80, deadline - Date.now()));
+    }
+  }
+
+  function throwIfSendCancelled() {
+    if (state.cancelRequested) {
+      const error = new Error("send_cancelled");
+      error.name = "SendCancelledError";
+      throw error;
+    }
+  }
+
+  function isSendCancelledError(error) {
+    return error instanceof Error && error.name === "SendCancelledError";
   }
 
   function startDrag(event) {
