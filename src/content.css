@@ -33,19 +33,19 @@
 
 @media (prefers-color-scheme: dark) {
   #jm-floating-composer-root {
-    --jm-bg: rgba(15, 23, 42, 0.96);
+    --jm-bg: #0f0f12;
     --jm-panel-border: rgba(148, 163, 184, 0.18);
     --jm-shadow: 0 18px 48px rgba(2, 6, 23, 0.5);
     --jm-text-primary: #f8fafc;
     --jm-text-secondary: #e2e8f0;
     --jm-text-muted: #94a3b8;
     --jm-text-placeholder: #64748b;
-    --jm-control-bg: rgba(30, 41, 59, 0.96);
+    --jm-control-bg: #1b1c21;
     --jm-control-border: rgba(148, 163, 184, 0.2);
     --jm-control-focus: rgba(148, 163, 184, 0.36);
     --jm-control-ring: rgba(148, 163, 184, 0.16);
-    --jm-subtle-bg: rgba(148, 163, 184, 0.12);
-    --jm-subtle-btn-bg: rgba(148, 163, 184, 0.12);
+    --jm-subtle-bg: #1b1c21;
+    --jm-subtle-btn-bg: #1b1c21;
     --jm-primary-bg: #e2e8f0;
     --jm-primary-text: #0f172a;
   }
@@ -72,19 +72,19 @@ html[lv-theme="light"] #jm-floating-composer-root {
 
 body[lv-theme="dark"] #jm-floating-composer-root,
 html[lv-theme="dark"] #jm-floating-composer-root {
-  --jm-bg: rgba(15, 23, 42, 0.96);
+  --jm-bg: #0f0f12;
   --jm-panel-border: rgba(148, 163, 184, 0.18);
   --jm-shadow: 0 18px 48px rgba(2, 6, 23, 0.5);
   --jm-text-primary: #f8fafc;
   --jm-text-secondary: #e2e8f0;
   --jm-text-muted: #94a3b8;
   --jm-text-placeholder: #64748b;
-  --jm-control-bg: rgba(30, 41, 59, 0.96);
+  --jm-control-bg: #1b1c21;
   --jm-control-border: rgba(148, 163, 184, 0.2);
   --jm-control-focus: rgba(148, 163, 184, 0.36);
   --jm-control-ring: rgba(148, 163, 184, 0.16);
-  --jm-subtle-bg: rgba(148, 163, 184, 0.12);
-  --jm-subtle-btn-bg: rgba(148, 163, 184, 0.12);
+  --jm-subtle-bg: #1b1c21;
+  --jm-subtle-btn-bg: #1b1c21;
   --jm-primary-bg: #e2e8f0;
   --jm-primary-text: #0f172a;
 }
@@ -303,7 +303,7 @@ html[lv-theme="dark"] #jm-floating-composer-root .jm-floating-composer__warning 
 
 body[lv-theme="dark"] #jm-floating-composer-root .jm-floating-composer__warning-btn,
 html[lv-theme="dark"] #jm-floating-composer-root .jm-floating-composer__warning-btn {
-  background: rgba(15, 23, 42, 0.46);
+  background: #1b1c21;
   border-color: rgba(251, 191, 36, 0.28);
 }
 
