@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="即梦浮动输入框">
+  <rect width="128" height="128" rx="28" fill="#111827"/>
+  <rect x="18" y="24" width="92" height="62" rx="14" fill="#f9fafb"/>
+  <rect x="28" y="38" width="56" height="8" rx="4" fill="#111827" opacity="0.92"/>
+  <rect x="28" y="54" width="72" height="8" rx="4" fill="#6b7280" opacity="0.82"/>
+  <rect x="28" y="70" width="44" height="8" rx="4" fill="#9ca3af" opacity="0.9"/>
+  <path d="M80 92h20a10 10 0 0 0 10-10V60l-30 32Z" fill="#111827"/>
+  <path d="M50 104l14-14 10 10 22-24" fill="none" stroke="#f59e0b" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+</svg>
