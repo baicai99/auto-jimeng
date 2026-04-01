@@ -1,10 +1,11 @@
 (function () {
   "use strict";
 
-  const TARGET_PATH = "/ai-tool/generate";
+  const TARGET_PATH_PATTERNS = [/^\/ai-tool\/generate(?:\/|$)/, /^\/ai-tool\/canvas(?:\/|$)/];
   const ROOT_ID = "jm-floating-composer-root";
   const COLLAPSED_CLASS = "jm-floating-composer--collapsed";
   const BATCH_SEND_INTERVAL_MS = 1500;
+  const DRAG_THRESHOLD_PX = 4;
   const DB_NAME = "jm-floating-composer-db";
   const STORE_NAME = "composer_state";
   const STATE_KEY = "default";
@@ -28,13 +29,14 @@
     suffixText: "",
     isSending: false,
     collapsed: false,
+    customPosition: null,
     hydrated: false,
     lastStatusText: "未找到官方输入框"
   };
 
   const ui = {
     root: null,
-    shell: null,
+    header: null,
     expanded: null,
     collapsed: null,
     dynamicSection: null,
@@ -58,6 +60,9 @@
   let refreshTimer = null;
   let persistTimer = null;
   let dbPromise = null;
+  let positionFrame = null;
+  let activeDrag = null;
+  let suppressCollapsedClick = false;
 
   if (!isTargetPage()) {
     return;
@@ -69,8 +74,10 @@
     mountFloatingComposer();
     await hydratePersistedState();
     refreshAdapterStatus();
-    observer = new MutationObserver(() => {
-      scheduleAdapterRefresh();
+    observer = new MutationObserver((mutations) => {
+      if (shouldRefreshAdapterForMutations(mutations)) {
+        scheduleAdapterRefresh();
+      }
     });
     observer.observe(document.documentElement, {
       childList: true,
@@ -94,10 +101,44 @@
       window.clearTimeout(persistTimer);
       persistTimer = null;
     }
+    if (positionFrame) {
+      window.cancelAnimationFrame(positionFrame);
+      positionFrame = null;
+    }
+    stopDrag();
+    window.removeEventListener("resize", onWindowResize);
+  }
+
+  function shouldRefreshAdapterForMutations(mutations) {
+    return mutations.some((mutation) => !isMutationInsideExtensionUI(mutation));
+  }
+
+  function isMutationInsideExtensionUI(mutation) {
+    const target = mutation.target;
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    if (isInsideExtensionUI(target)) {
+      return true;
+    }
+
+    if (mutation.type === "childList") {
+      return (
+        Array.from(mutation.addedNodes).every(isNodeInsideExtensionUI) &&
+        Array.from(mutation.removedNodes).every(isNodeInsideExtensionUI)
+      );
+    }
+
+    return false;
+  }
+
+  function isNodeInsideExtensionUI(node) {
+    return node instanceof Element ? isInsideExtensionUI(node) : true;
   }
 
   function isTargetPage() {
-    return window.location.pathname.startsWith(TARGET_PATH);
+    return TARGET_PATH_PATTERNS.some((pattern) => pattern.test(window.location.pathname));
   }
 
   function mountFloatingComposer() {
@@ -164,6 +205,7 @@
     document.body.appendChild(root);
 
     ui.root = root;
+    ui.header = root.querySelector(".jm-floating-composer__header");
     ui.expanded = root.querySelector(".jm-floating-composer__expanded");
     ui.collapsed = root.querySelector(".jm-floating-composer__collapsed");
     ui.dynamicSection = root.querySelector(".jm-floating-composer__section--dynamic");
@@ -196,10 +238,41 @@
     ui.suffixToggle.addEventListener("click", onSuffixToggleClick);
     ui.suffixTextarea.addEventListener("input", onSuffixInput);
     ui.sendButton.addEventListener("click", onSendClick);
+    ui.header.addEventListener("pointerdown", onExpandedHeaderPointerDown);
     ui.toggleButton.addEventListener("click", () => setCollapsed(true));
-    ui.expandButton.addEventListener("click", () => setCollapsed(false));
+    ui.expandButton.addEventListener("pointerdown", onCollapsedPointerDown);
+    ui.expandButton.addEventListener("click", onCollapsedClick);
+    window.addEventListener("resize", onWindowResize);
 
     syncUIState();
+  }
+
+  function onExpandedHeaderPointerDown(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (event.button !== 0 || (target && target.closest("button"))) {
+      return;
+    }
+
+    startDrag(event);
+  }
+
+  function onCollapsedPointerDown(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    startDrag(event);
+  }
+
+  function onCollapsedClick(event) {
+    if (suppressCollapsedClick) {
+      suppressCollapsedClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    setCollapsed(false);
   }
 
   function onDynamicToggleClick(event) {
@@ -384,6 +457,10 @@
     syncUIState();
   }
 
+  function onWindowResize() {
+    schedulePositionSync();
+  }
+
   function scheduleAdapterRefresh() {
     if (refreshTimer) {
       window.clearTimeout(refreshTimer);
@@ -458,7 +535,31 @@
     ui.textarea.disabled = state.isSending;
     ui.suffixTextarea.disabled = state.isSending;
 
+    schedulePositionSync();
     scheduleStatePersist();
+  }
+
+  function schedulePositionSync() {
+    if (positionFrame || activeDrag) {
+      return;
+    }
+
+    positionFrame = window.requestAnimationFrame(() => {
+      positionFrame = null;
+      syncFloatingPosition();
+    });
+  }
+
+  function syncFloatingPosition() {
+    if (!ui.root || !state.customPosition || activeDrag) {
+      return;
+    }
+
+    const rect = ui.root.getBoundingClientRect();
+    applyFloatingPosition(
+      resolveFloatingPosition(state.customPosition, rect.width, rect.height),
+      { persist: false }
+    );
   }
 
   async function sendDraft() {
@@ -715,6 +816,10 @@
         if (typeof persisted.collapsed === "boolean") {
           state.collapsed = persisted.collapsed;
         }
+        const normalizedPosition = normalizePersistedPosition(persisted.customPosition);
+        if (normalizedPosition) {
+          state.customPosition = normalizedPosition;
+        }
       }
     } catch (error) {
       console.error("[即梦浮动输入框] 读取 IndexedDB 失败", error);
@@ -773,8 +878,35 @@
       draftText: state.draftText,
       suffixEnabled: state.suffixEnabled,
       suffixText: state.suffixText,
-      collapsed: state.collapsed
+      collapsed: state.collapsed,
+      customPosition: state.customPosition
     };
+  }
+
+  function isPersistedPosition(value) {
+    return Boolean(normalizePersistedPosition(value));
+  }
+
+  function normalizePersistedPosition(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+
+    if (Number.isFinite(value.right) && Number.isFinite(value.bottom)) {
+      return {
+        right: Math.max(0, Math.round(value.right)),
+        bottom: Math.max(0, Math.round(value.bottom))
+      };
+    }
+
+    if (Number.isFinite(value.left) && Number.isFinite(value.top)) {
+      return {
+        left: Math.round(value.left),
+        top: Math.round(value.top)
+      };
+    }
+
+    return null;
   }
 
   function getDb() {
@@ -1313,5 +1445,145 @@
     return new Promise((resolve) => {
       window.setTimeout(resolve, ms);
     });
+  }
+
+  function startDrag(event) {
+    if (!ui.root) {
+      return;
+    }
+
+    const rect = ui.root.getBoundingClientRect();
+    const origin = clampFloatingPosition(rect.left, rect.top, rect.width, rect.height);
+
+    applyFloatingPosition(origin, { persist: false });
+    activeDrag = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startLeft: origin.left,
+      startTop: origin.top,
+      moved: false
+    };
+
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function") {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Ignore capture failures and fall back to window listeners.
+      }
+    }
+
+    window.addEventListener("pointermove", onDragPointerMove);
+    window.addEventListener("pointerup", onDragPointerUp);
+    window.addEventListener("pointercancel", onDragPointerUp);
+    event.preventDefault();
+  }
+
+  function onDragPointerMove(event) {
+    if (!activeDrag || event.pointerId !== activeDrag.pointerId || !ui.root) {
+      return;
+    }
+
+    const deltaX = event.clientX - activeDrag.startClientX;
+    const deltaY = event.clientY - activeDrag.startClientY;
+    const rect = ui.root.getBoundingClientRect();
+    const nextPosition = clampFloatingPosition(
+      activeDrag.startLeft + deltaX,
+      activeDrag.startTop + deltaY,
+      rect.width,
+      rect.height
+    );
+
+    if (
+      !activeDrag.moved &&
+      (Math.abs(deltaX) >= DRAG_THRESHOLD_PX || Math.abs(deltaY) >= DRAG_THRESHOLD_PX)
+    ) {
+      activeDrag.moved = true;
+    }
+
+    applyFloatingPosition(nextPosition, { persist: false });
+  }
+
+  function onDragPointerUp(event) {
+    if (!activeDrag || event.pointerId !== activeDrag.pointerId || !ui.root) {
+      return;
+    }
+
+    const rect = ui.root.getBoundingClientRect();
+    const finalPosition = clampFloatingPosition(rect.left, rect.top, rect.width, rect.height);
+    const didMove = activeDrag.moved;
+
+    applyFloatingPosition(finalPosition, { width: rect.width, height: rect.height });
+    stopDrag();
+
+    if (didMove && state.collapsed) {
+      suppressCollapsedClick = true;
+    }
+  }
+
+  function stopDrag() {
+    activeDrag = null;
+    window.removeEventListener("pointermove", onDragPointerMove);
+    window.removeEventListener("pointerup", onDragPointerUp);
+    window.removeEventListener("pointercancel", onDragPointerUp);
+  }
+
+  function clampFloatingPosition(left, top, width, height) {
+    const margin = window.innerWidth <= 640 ? 12 : 20;
+    return {
+      left: clamp(left, margin, Math.max(margin, window.innerWidth - width - margin)),
+      top: clamp(top, margin, Math.max(margin, window.innerHeight - height - margin))
+    };
+  }
+
+  function resolveFloatingPosition(position, width, height) {
+    if (Number.isFinite(position.right) && Number.isFinite(position.bottom)) {
+      return clampFloatingPosition(
+        window.innerWidth - width - position.right,
+        window.innerHeight - height - position.bottom,
+        width,
+        height
+      );
+    }
+
+    return clampFloatingPosition(position.left, position.top, width, height);
+  }
+
+  function buildFloatingAnchor(position, width, height) {
+    const clamped = clampFloatingPosition(position.left, position.top, width, height);
+    return {
+      right: Math.max(0, Math.round(window.innerWidth - clamped.left - width)),
+      bottom: Math.max(0, Math.round(window.innerHeight - clamped.top - height))
+    };
+  }
+
+  function applyFloatingPosition(position, options = {}) {
+    if (!ui.root) {
+      return;
+    }
+
+    const { persist = true, width = null, height = null } = options;
+    const nextPosition = {
+      left: Math.round(position.left),
+      top: Math.round(position.top)
+    };
+
+    ui.root.style.left = `${nextPosition.left}px`;
+    ui.root.style.top = `${nextPosition.top}px`;
+    ui.root.style.right = "auto";
+    ui.root.style.bottom = "auto";
+
+    if (!persist) {
+      return;
+    }
+
+    const resolvedWidth = Number.isFinite(width) ? width : ui.root.getBoundingClientRect().width;
+    const resolvedHeight = Number.isFinite(height) ? height : ui.root.getBoundingClientRect().height;
+    state.customPosition = buildFloatingAnchor(nextPosition, resolvedWidth, resolvedHeight);
+    scheduleStatePersist();
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
   }
 })();

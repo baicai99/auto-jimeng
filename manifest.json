@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "即梦浮动输入框",
-  "description": "在即梦生成页右下角提供一个更顺手的浮动输入框，并复用官方发送流程。",
-  "version": "0.1.0",
+  "description": "在即梦生成相关页面右下角提供一个更顺手的浮动输入框，并复用官方发送流程。",
+  "version": "0.1.1",
   "content_scripts": [
     {
       "matches": [
-        "https://jimeng.jianying.com/ai-tool/generate*"
+        "https://jimeng.jianying.com/ai-tool/generate*",
+        "https://jimeng.jianying.com/ai-tool/canvas*"
       ],
       "js": [
         "src/content.js"
